@@ -55,7 +55,8 @@ class Book extends ActiveRecord
             [['description'], 'string'],
             [['title', 'photo'], 'string', 'max' => 255],
             [['isbn'], 'string', 'max' => 50],
-            ['isbn', 'default', 'value' => null],
+            [['isbn'], 'unique', 'message' => 'Книга с таким ISBN уже существует'],
+            ['author_ids', 'required', 'min' => 1, 'message' => 'Выберите хотя бы одного автора'],
             ['author_ids', 'each', 'rule' => ['integer']],
         ];
     }
