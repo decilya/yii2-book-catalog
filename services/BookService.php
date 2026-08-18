@@ -12,9 +12,6 @@ use yii\web\UploadedFile;
 
 /**
  * Сервис управления книгами
- *
- * Содержит бизнес-логику: создание, обновление, удаление книг,
- * а также уведомление подписчиков о новых книгах.
  */
 class BookService
 {
@@ -23,14 +20,6 @@ class BookService
     private SubscriptionRepositoryInterface $subRepo;
     private SmsService $smsService;
 
-    /**
-     * Конструктор с внедрением зависимостей
-     *
-     * @param BookRepositoryInterface $bookRepo Репозиторий книг
-     * @param AuthorRepositoryInterface $authorRepo Репозиторий авторов
-     * @param SubscriptionRepositoryInterface $subRepo Репозиторий подписок
-     * @param SmsService $smsService Сервис отправки SMS
-     */
     public function __construct(
         BookRepositoryInterface $bookRepo,
         AuthorRepositoryInterface $authorRepo,
@@ -43,82 +32,66 @@ class BookService
         $this->smsService = $smsService;
     }
 
-    /**
-     * Возвращает все книги
-     *
-     * @return Book[]
-     */
     public function getAll(): array
     {
         return $this->bookRepo->findAll();
     }
 
-    /**
-     * Находит книгу по ID
-     *
-     * @param int $id
-     * @return Book|null
-     */
     public function getOne(int $id): ?Book
     {
         return $this->bookRepo->findById($id);
     }
 
     /**
-     * Создаёт новую книгу и отправляет уведомления подписчикам
-     *
-     * @param Book $book Модель книги
-     * @param array $authorIds Массив ID авторов (может быть строками)
-     * @param UploadedFile|null $photo Загруженное фото (опционально)
-     * @return bool
-     */
-    public function createBook(Book $book, array $authorIds, ?UploadedFile $photo = null): bool
-    {
-        // Приводим все ID авторов к целочисленному типу
-        $authorIds = array_map('intval', $authorIds);
-
-        // Если передано фото – загружаем
-        if ($photo) {
-            $book->photo = $this->uploadPhoto($photo);
-        }
-
-        // Сохраняем книгу и связи с авторами
-        if ($this->bookRepo->saveWithAuthors($book, $authorIds)) {
-            // Отправляем уведомления (ошибки не прерывают работу)
-            $this->notifySubscribers($authorIds, $book->title);
-            return true;
-        }
-        return false;
-    }
-
-    /**
-     * Обновляет книгу
+     * Создаёт новую книгу
      *
      * @param Book $book
      * @param array $authorIds
      * @param UploadedFile|null $photo
      * @return bool
      */
+    public function createBook(Book $book, array $authorIds, ?UploadedFile $photo = null): bool
+    {
+        $authorIds = array_map('intval', $authorIds);
+
+        // Обрабатываем фото, если оно передано
+        if ($photo && !$photo->getHasError()) {
+            try {
+                $book->photo = $this->uploadPhoto($photo);
+            } catch (\Exception $e) {
+                Yii::error('Ошибка загрузки фото: ' . $e->getMessage(), 'book');
+                // Не сохраняем книгу, если фото не загрузилось
+                return false;
+            }
+        }
+
+        if ($this->bookRepo->saveWithAuthors($book, $authorIds)) {
+            $this->notifySubscribers($authorIds, $book->title);
+            return true;
+        }
+        return false;
+    }
+
     public function updateBook(Book $book, array $authorIds, ?UploadedFile $photo = null): bool
     {
         $authorIds = array_map('intval', $authorIds);
 
-        if ($photo) {
-            // Удаляем старое фото, если есть
-            if ($book->photo) {
-                $this->deletePhoto($book->photo);
+        if ($photo && !$photo->getHasError()) {
+            try {
+                // Удаляем старое фото, если есть
+                if ($book->photo) {
+                    $this->deletePhoto($book->photo);
+                }
+                $book->photo = $this->uploadPhoto($photo);
+            } catch (\Exception $e) {
+                Yii::error('Ошибка загрузки фото при обновлении: ' . $e->getMessage(), 'book');
+                return false;
             }
-            $book->photo = $this->uploadPhoto($photo);
         }
+
         return $this->bookRepo->saveWithAuthors($book, $authorIds);
     }
 
-    /**
-     * Удаляет книгу и сопутствующее фото
-     *
-     * @param int $id
-     * @return bool
-     */
     public function deleteBook(int $id): bool
     {
         $book = $this->bookRepo->findById($id);
@@ -129,10 +102,58 @@ class BookService
     }
 
     /**
-     * Уведомляет всех подписчиков авторов о новой книге
+     * Загружает фото на сервер с проверкой MIME-типа и размера
      *
-     * @param array $authorIds Массив ID авторов
-     * @param string $bookTitle Название книги
+     * @param UploadedFile $file
+     * @return string Относительный URL к файлу
+     * @throws \Exception
+     */
+    private function uploadPhoto(UploadedFile $file): string
+    {
+        $dir = Yii::getAlias('@webroot/uploads/books');
+        if (!is_dir($dir)) {
+            mkdir($dir, 0775, true);
+        }
+
+        // Проверка MIME-типа
+        $allowedMime = ['image/jpeg', 'image/png', 'image/gif'];
+        if (!in_array($file->type, $allowedMime, true)) {
+            throw new \Exception('Недопустимый тип файла. Разрешены только JPG, PNG, GIF.');
+        }
+
+        // Проверка размера (максимум 5 МБ)
+        $maxSize = 5 * 1024 * 1024;
+        if ($file->size > $maxSize) {
+            throw new \Exception('Файл слишком большой. Максимальный размер: 5 МБ.');
+        }
+
+        $filename = uniqid() . '.' . $file->extension;
+        if (!$file->saveAs($dir . '/' . $filename)) {
+            throw new \Exception('Не удалось сохранить файл на сервере.');
+        }
+
+        return '/uploads/books/' . $filename;
+    }
+
+    /**
+     * Удаляет файл фото с диска
+     *
+     * @param string $path
+     * @return void
+     */
+    private function deletePhoto(string $path): void
+    {
+        $fullPath = Yii::getAlias('@webroot') . $path;
+        if (is_file($fullPath)) {
+            unlink($fullPath);
+        }
+    }
+
+    /**
+     * Уведомляет подписчиков авторов
+     *
+     * @param array $authorIds
+     * @param string $bookTitle
      * @return void
      */
     private function notifySubscribers(array $authorIds, string $bookTitle): void
@@ -142,53 +163,15 @@ class BookService
             if (!$author) {
                 continue;
             }
-
             $phones = $this->subRepo->getPhonesByAuthorId((int)$authorId);
-            if (empty($phones)) {
-                continue;
-            }
-
             $message = "Новая книга '{$bookTitle}' от автора {$author->full_name} добавлена в каталог!";
-
             foreach ($phones as $phone) {
                 try {
                     $this->smsService->send($phone, $message);
                 } catch (\Exception $e) {
-                    // Логируем ошибку, но не прерываем выполнение
                     Yii::error("Не удалось отправить SMS на {$phone}: " . $e->getMessage(), 'sms');
                 }
             }
-        }
-    }
-
-    /**
-     * Загружает фото на сервер
-     *
-     * @param UploadedFile $file
-     * @return string Относительный URL к файлу
-     */
-    private function uploadPhoto(UploadedFile $file): string
-    {
-        $dir = Yii::getAlias('@webroot/uploads/books');
-        if (!is_dir($dir)) {
-            mkdir($dir, 0775, true);
-        }
-        $filename = uniqid() . '.' . $file->extension;
-        $file->saveAs($dir . '/' . $filename);
-        return '/uploads/books/' . $filename;
-    }
-
-    /**
-     * Удаляет файл фото с диска
-     *
-     * @param string $path Относительный путь к файлу
-     * @return void
-     */
-    private function deletePhoto(string $path): void
-    {
-        $fullPath = Yii::getAlias('@webroot') . $path;
-        if (is_file($fullPath)) {
-            unlink($fullPath);
         }
     }
 }
