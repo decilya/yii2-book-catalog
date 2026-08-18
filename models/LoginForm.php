@@ -33,10 +33,10 @@ class LoginForm extends Model
      * Валидация пароля
      *
      * @param string $attribute
-     * @param array $params
+     * @param array|null $params
      * @return void
      */
-    public function validatePassword(string $attribute, array $params): void
+    public function validatePassword(string $attribute, ?array $params = null): void
     {
         if (!$this->hasErrors()) {
             $user = $this->getUser();
