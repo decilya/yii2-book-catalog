@@ -55,7 +55,7 @@ docker-compose exec app composer require yiisoft/yii2-httpclient
 docker-compose exec app php yii migrate --interactive=0
 
 # 6. Права на папки (для загрузки фото и логов)
-docker-compose exec app chmod -R 777 web/uploads runtime
+docker-compose exec app chmod -R 775 web/uploads runtime
 
 # 7. Откройте в браузере
 http://localhost:8080

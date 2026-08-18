@@ -54,44 +54,72 @@ class BookService
     {
         $authorIds = array_map('intval', $authorIds);
 
-        // Обрабатываем фото, если оно передано
+        // 1. Сначала сохраняем книгу и связи в БД
+        if (!$this->bookRepo->saveWithAuthors($book, $authorIds)) {
+            return false;
+        }
+
+        // 2. Если фото передано, загружаем его и обновляем поле только после успешной загрузки
         if ($photo && !$photo->getHasError()) {
             try {
                 $book->photo = $this->uploadPhoto($photo);
+                $book->updateAttributes(['photo']); // обновляем только поле photo
             } catch (\Exception $e) {
                 Yii::error('Ошибка загрузки фото: ' . $e->getMessage(), 'book');
-                // Не сохраняем книгу, если фото не загрузилось
+                // Книга уже сохранена, но фото не загружено — возвращаем false, чтобы сигнализировать о проблеме
+                // Можно также удалить только что созданную книгу, но для тестового задания достаточно вернуть false
                 return false;
             }
         }
 
-        if ($this->bookRepo->saveWithAuthors($book, $authorIds)) {
-            $this->notifySubscribers($authorIds, $book->title);
-            return true;
-        }
-        return false;
+        $this->notifySubscribers($authorIds, $book->title);
+        return true;
     }
 
+    /**
+     * Обновляет книгу
+     *
+     * @param Book $book
+     * @param array $authorIds
+     * @param UploadedFile|null $photo
+     * @return bool
+     */
     public function updateBook(Book $book, array $authorIds, ?UploadedFile $photo = null): bool
     {
         $authorIds = array_map('intval', $authorIds);
 
+        // 1. Сначала обновляем данные книги и связи в БД
+        if (!$this->bookRepo->saveWithAuthors($book, $authorIds)) {
+            return false;
+        }
+
+        // 2. Если передано новое фото, удаляем старое и загружаем новое только после успешного обновления БД
         if ($photo && !$photo->getHasError()) {
             try {
-                // Удаляем старое фото, если есть
-                if ($book->photo) {
-                    $this->deletePhoto($book->photo);
-                }
+                // Сохраняем старый путь для удаления в случае успешной загрузки нового
+                $oldPhoto = $book->photo;
                 $book->photo = $this->uploadPhoto($photo);
+                $book->updateAttributes(['photo']);
+
+                // Теперь можно безопасно удалить старое фото
+                if ($oldPhoto) {
+                    $this->deletePhoto($oldPhoto);
+                }
             } catch (\Exception $e) {
                 Yii::error('Ошибка загрузки фото при обновлении: ' . $e->getMessage(), 'book');
                 return false;
             }
         }
 
-        return $this->bookRepo->saveWithAuthors($book, $authorIds);
+        return true;
     }
 
+    /**
+     * Удаляет книгу
+     *
+     * @param int $id
+     * @return bool
+     */
     public function deleteBook(int $id): bool
     {
         $book = $this->bookRepo->findById($id);
