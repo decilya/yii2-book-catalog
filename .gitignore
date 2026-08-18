@@ -1,0 +1,66 @@
+# Yii2
+/vendor/
+/runtime/
+/web/assets/
+/web/uploads/books/*
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# IDE
+/.idea/
+/.vscode/
+*.iml
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Composer
+composer.phar
+
+# Tests
+/tests/_output/
+/tests/_support/_generated/
+
+# Misc
+/.phpunit.result.cache
+
+# Tests
+/tests/
+/codeception.yml
+/c3.php
+/phpcs.xml.dist
+/phpstan.neon
+/screenshots/
+
+# Vagrant
+/vagrant/
+/Vagrantfile
+
+# IDE
+/.idea/
+/.vscode/
+
+# Tests
+/tests/
+/codeception.yml
+/c3.php
+/phpcs.xml.dist
+/phpstan.neon
+/screenshots/
+
+# Vagrant
+/vagrant/
+/Vagrantfile
+
+# IDE
+/.idea/
+/.vscode/
