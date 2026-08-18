@@ -11,7 +11,10 @@ use Yii;
 use yii\web\UploadedFile;
 
 /**
- * Сервис для управления книгами
+ * Сервис управления книгами
+ *
+ * Содержит бизнес-логику: создание, обновление, удаление книг,
+ * а также уведомление подписчиков о новых книгах.
  */
 class BookService
 {
@@ -20,6 +23,14 @@ class BookService
     private SubscriptionRepositoryInterface $subRepo;
     private SmsService $smsService;
 
+    /**
+     * Конструктор с внедрением зависимостей
+     *
+     * @param BookRepositoryInterface $bookRepo Репозиторий книг
+     * @param AuthorRepositoryInterface $authorRepo Репозиторий авторов
+     * @param SubscriptionRepositoryInterface $subRepo Репозиторий подписок
+     * @param SmsService $smsService Сервис отправки SMS
+     */
     public function __construct(
         BookRepositoryInterface $bookRepo,
         AuthorRepositoryInterface $authorRepo,
@@ -56,26 +67,24 @@ class BookService
     /**
      * Создаёт новую книгу и отправляет уведомления подписчикам
      *
-     * @param Book $book
-     * @param int[]|string[] $authorIds
-     * @param UploadedFile|null $photo
+     * @param Book $book Модель книги
+     * @param array $authorIds Массив ID авторов (может быть строками)
+     * @param UploadedFile|null $photo Загруженное фото (опционально)
      * @return bool
      */
     public function createBook(Book $book, array $authorIds, ?UploadedFile $photo = null): bool
     {
+        // Приводим все ID авторов к целочисленному типу
         $authorIds = array_map('intval', $authorIds);
 
+        // Если передано фото – загружаем
         if ($photo) {
             $book->photo = $this->uploadPhoto($photo);
         }
 
-        if (!$book->validate()) {
-            Yii::error('Ошибка валидации книги: ' . json_encode($book->getErrors()), 'book');
-            return false;
-        }
-
+        // Сохраняем книгу и связи с авторами
         if ($this->bookRepo->saveWithAuthors($book, $authorIds)) {
-            Yii::info('Перед уведомлениями. authorIds: ' . json_encode($authorIds), 'book');
+            // Отправляем уведомления (ошибки не прерывают работу)
             $this->notifySubscribers($authorIds, $book->title);
             return true;
         }
@@ -86,16 +95,16 @@ class BookService
      * Обновляет книгу
      *
      * @param Book $book
-     * @param int[]|string[] $authorIds
+     * @param array $authorIds
      * @param UploadedFile|null $photo
      * @return bool
      */
     public function updateBook(Book $book, array $authorIds, ?UploadedFile $photo = null): bool
     {
-        // Приводим все ID авторов к int
         $authorIds = array_map('intval', $authorIds);
 
         if ($photo) {
+            // Удаляем старое фото, если есть
             if ($book->photo) {
                 $this->deletePhoto($book->photo);
             }
@@ -105,7 +114,7 @@ class BookService
     }
 
     /**
-     * Удаляет книгу и сопутствующий файл фото
+     * Удаляет книгу и сопутствующее фото
      *
      * @param int $id
      * @return bool
@@ -120,24 +129,34 @@ class BookService
     }
 
     /**
-     * Уведомляет подписчиков авторов о новой книге
+     * Уведомляет всех подписчиков авторов о новой книге
      *
-     * @param int[] $authorIds
-     * @param string $bookTitle
+     * @param array $authorIds Массив ID авторов
+     * @param string $bookTitle Название книги
      * @return void
      */
     private function notifySubscribers(array $authorIds, string $bookTitle): void
     {
         foreach ($authorIds as $authorId) {
-            // $authorId уже int, но на всякий случай приведём
             $author = $this->authorRepo->findById((int)$authorId);
             if (!$author) {
                 continue;
             }
-            $phones = $this->subRepo->getPhonesByAuthorId($authorId);
+
+            $phones = $this->subRepo->getPhonesByAuthorId((int)$authorId);
+            if (empty($phones)) {
+                continue;
+            }
+
             $message = "Новая книга '{$bookTitle}' от автора {$author->full_name} добавлена в каталог!";
+
             foreach ($phones as $phone) {
-                $this->smsService->send($phone, $message);
+                try {
+                    $this->smsService->send($phone, $message);
+                } catch (\Exception $e) {
+                    // Логируем ошибку, но не прерываем выполнение
+                    Yii::error("Не удалось отправить SMS на {$phone}: " . $e->getMessage(), 'sms');
+                }
             }
         }
     }
@@ -146,7 +165,7 @@ class BookService
      * Загружает фото на сервер
      *
      * @param UploadedFile $file
-     * @return string Относительный путь к файлу
+     * @return string Относительный URL к файлу
      */
     private function uploadPhoto(UploadedFile $file): string
     {
@@ -162,7 +181,7 @@ class BookService
     /**
      * Удаляет файл фото с диска
      *
-     * @param string $path Относительный путь
+     * @param string $path Относительный путь к файлу
      * @return void
      */
     private function deletePhoto(string $path): void
