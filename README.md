@@ -182,6 +182,8 @@ config/           – настройки (web.php, db.php, params.php)
 ### Логи отправки SMS (эмуляция)
 ![Логи SMS](screenshots/log-sms.png)
 
+### ТОП-10 авторов за год
+![ТОП-10 авторов](screenshots/top.png)
 ---
 
 ## Ответы на вопросы из ТЗ
